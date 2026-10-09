@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Partials, Events, ChannelType } from 'discord.js'; // Đã thêm ChannelType
+import { Client, GatewayIntentBits, Partials, Events, ChannelType } from 'discord.js';
 import { GoogleGenAI } from '@google/genai';
 import cron from 'node-cron';
 import dotenv from 'dotenv';
@@ -23,10 +23,10 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.DirectMessages, // Cần intent này để nhận DM
-        GatewayIntentBits.MessageContent  // Cần intent này để đọc nội dung DM
+        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.MessageContent
     ],
-    partials: [Partials.Channel, Partials.Message] // Cần partials để xử lý DM chưa cache
+    partials: [Partials.Channel, Partials.Message]
 });
 
 const TEN_THU_VI = {
@@ -116,7 +116,8 @@ async function saveTkbToGithub(data) {
             sha = fileData.sha;
         }
 
-        const contentBase64 = Buffer.from(JSON.stringify(data, null, 4)).toString('utf-8');
+        // Đã sửa thành 'base64' chuẩn cho GitHub API
+        const contentBase64 = Buffer.from(JSON.stringify(data, null, 4)).toString('base64');
 
         const body = {
             message: "bot: tự động cập nhật tkb_data.json từ Discord",
@@ -183,7 +184,7 @@ async function analyzeTkbWithAI(imageUrl, mimeType = 'image/png') {
             }
         ],
         config: {
-            responseMimeType: "application/json" // Ép Gemini trả về JSON chuẩn
+            responseMimeType: "application/json"
         }
     });
 
@@ -200,39 +201,24 @@ client.once(Events.ClientReady, async () => {
 });
 
 client.on(Events.MessageCreate, async (message) => {
-    // 1. Bỏ qua nếu là bot nhắn
     if (message.author.bot) return;
 
-    // >>> CHỖ CẦN SỬA ĐỂ FIX CHỈ NHẬN DM <<<
-    // 2. CHỈ xử lý nếu đây là tin nhắn riêng (DM)
-    if (message.channel.type !== ChannelType.DM) {
-        // Nếu người dùng gửi ảnh trong server, bot có thể nhắc nhở (tùy chọn)
-        /*
-        if (message.attachments.size > 0 && message.attachments.first().contentType?.startsWith('image/')) {
-             await message.reply("🤖 Vui lòng **nhắn tin riêng** với mình để cập nhật Thời khóa biểu nhé!");
-        }
-        */
-        return; // Thoát, không xử lý ảnh trong server nữa
-    }
+    // Chỉ xử lý tin nhắn riêng (DM)
+    if (message.channel.type !== ChannelType.DM) return;
 
-    // 3. Kiểm tra ảnh và xử lý (đã là DM rồi)
     if (message.attachments.size > 0) {
         const attachment = message.attachments.first();
         const isImage = attachment.contentType?.startsWith('image/');
 
         if (isImage) {
-            // Phản hồi trong DM
             await message.channel.send("🤖 **Gemini AI** đang phân tích ảnh TKB bạn gửi riêng, vui lòng chờ chút...");
 
             try {
-                // Truyền thêm contentType động vào hàm
                 const parsedTkb = await analyzeTkbWithAI(attachment.url, attachment.contentType);
                 await saveTkbToGithub(parsedTkb);
-                // Phản hồi thành công trong DM
-                await message.channel.send("✅ **Đã đọc và cập nhật Thời khóa biểu lên GitHub thành công từ tin nhắn riêng!**");
+                await message.channel.send("✅ **Đã đọc và cập nhật Thời khóa biểu lên GitHub thành công!**");
             } catch (error) {
                 console.error("Lỗi xử lý TKB (DM):", error);
-                // Phản hồi lỗi trong DM
                 await message.channel.send(`❌ Lỗi khi xử lý ảnh DM: ${error.message}`);
             }
         }
@@ -240,10 +226,9 @@ client.on(Events.MessageCreate, async (message) => {
 });
 
 // ------------------------------------------------------------------
-// LỊCH TRÌNH THÔNG BÁO TỰ ĐỘNG (VN - Ra Server)
+// LỊCH TRÌNH THÔNG BÁO TỰ ĐỘNG (VN)
 // ------------------------------------------------------------------
 function setupCronJobs() {
-    // ... (Giữ nguyên phần thông báo tự động ra kênh chung)
     const [gioSang, phutSang] = GIO_SANG.split(':');
     const [gioToi, phutToi] = GIO_TOI.split(':');
 
