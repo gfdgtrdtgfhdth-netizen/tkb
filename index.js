@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Partials, Events } from 'discord.js';
+import { Client, GatewayIntentBits, Partials, Events, ChannelType } from 'discord.js'; // Đã thêm ChannelType
 import { GoogleGenAI } from '@google/genai';
 import cron from 'node-cron';
 import dotenv from 'dotenv';
@@ -23,10 +23,10 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.DirectMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.DirectMessages, // Cần intent này để nhận DM
+        GatewayIntentBits.MessageContent  // Cần intent này để đọc nội dung DM
     ],
-    partials: [Partials.Channel, Partials.Message]
+    partials: [Partials.Channel, Partials.Message] // Cần partials để xử lý DM chưa cache
 });
 
 const TEN_THU_VI = {
@@ -193,40 +193,57 @@ async function analyzeTkbWithAI(imageUrl, mimeType = 'image/png') {
 // ------------------------------------------------------------------
 // SỰ KIỆN BOT
 // ------------------------------------------------------------------
-// Đã sửa 'clientReady' -> 'ready' (hoặc Events.ClientReady)
 client.once(Events.ClientReady, async () => {
-    console.log(`Bot đã kết nối thành công: ${client.user.tag}`);
+    console.log(`✅ Bot đã kết nối và CHỈ nhận TKB qua nhắn tin riêng (DM): ${client.user.tag}`);
     await detectGithubRepo();
     setupCronJobs();
 });
 
 client.on(Events.MessageCreate, async (message) => {
+    // 1. Bỏ qua nếu là bot nhắn
     if (message.author.bot) return;
 
+    // >>> CHỖ CẦN SỬA ĐỂ FIX CHỈ NHẬN DM <<<
+    // 2. CHỈ xử lý nếu đây là tin nhắn riêng (DM)
+    if (message.channel.type !== ChannelType.DM) {
+        // Nếu người dùng gửi ảnh trong server, bot có thể nhắc nhở (tùy chọn)
+        /*
+        if (message.attachments.size > 0 && message.attachments.first().contentType?.startsWith('image/')) {
+             await message.reply("🤖 Vui lòng **nhắn tin riêng** với mình để cập nhật Thời khóa biểu nhé!");
+        }
+        */
+        return; // Thoát, không xử lý ảnh trong server nữa
+    }
+
+    // 3. Kiểm tra ảnh và xử lý (đã là DM rồi)
     if (message.attachments.size > 0) {
         const attachment = message.attachments.first();
         const isImage = attachment.contentType?.startsWith('image/');
 
         if (isImage) {
-            await message.channel.send("🤖 **Gemini AI** đang phân tích ảnh TKB, vui lòng chờ chút...");
+            // Phản hồi trong DM
+            await message.channel.send("🤖 **Gemini AI** đang phân tích ảnh TKB bạn gửi riêng, vui lòng chờ chút...");
 
             try {
                 // Truyền thêm contentType động vào hàm
                 const parsedTkb = await analyzeTkbWithAI(attachment.url, attachment.contentType);
                 await saveTkbToGithub(parsedTkb);
-                await message.channel.send("✅ **Đã đọc và cập nhật Thời khóa biểu lên GitHub thành công!**");
+                // Phản hồi thành công trong DM
+                await message.channel.send("✅ **Đã đọc và cập nhật Thời khóa biểu lên GitHub thành công từ tin nhắn riêng!**");
             } catch (error) {
-                console.error("Lỗi xử lý TKB:", error);
-                await message.channel.send(`❌ Lỗi: ${error.message}`);
+                console.error("Lỗi xử lý TKB (DM):", error);
+                // Phản hồi lỗi trong DM
+                await message.channel.send(`❌ Lỗi khi xử lý ảnh DM: ${error.message}`);
             }
         }
     }
 });
 
 // ------------------------------------------------------------------
-// LỊCH TRÌNH THÔNG BÁO TỰ ĐỘNG (VN)
+// LỊCH TRÌNH THÔNG BÁO TỰ ĐỘNG (VN - Ra Server)
 // ------------------------------------------------------------------
 function setupCronJobs() {
+    // ... (Giữ nguyên phần thông báo tự động ra kênh chung)
     const [gioSang, phutSang] = GIO_SANG.split(':');
     const [gioToi, phutToi] = GIO_TOI.split(':');
 
@@ -273,7 +290,7 @@ function setupCronJobs() {
         }
     }, { timezone: TIMEZONE });
 
-    console.log(`Đã đặt lịch gửi TKB tự động (Múi giờ VN): Sáng ${GIO_SANG} & Tối ${GIO_TOI}`);
+    console.log(`Đã đặt lịch gửi TKB tự động ra server (Múi giờ VN): Sáng ${GIO_SANG} & Tối ${GIO_TOI}`);
 }
 
 client.login(DISCORD_TOKEN);
