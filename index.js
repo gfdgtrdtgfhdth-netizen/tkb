@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Partials } from 'discord.js';
+import { Client, GatewayIntentBits, Partials, Events } from 'discord.js';
 import { GoogleGenAI } from '@google/genai';
 import cron from 'node-cron';
 import dotenv from 'dotenv';
@@ -49,7 +49,8 @@ async function detectGithubRepo() {
         const userRes = await fetch("https://api.github.com/user", {
             headers: {
                 "Authorization": `Bearer ${GITHUB_TOKEN}`,
-                "Accept": "application/vnd.github.v3+json"
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "Discord-TKB-Bot"
             }
         });
         if (!userRes.ok) throw new Error("GITHUB_TOKEN không hợp lệ!");
@@ -57,7 +58,8 @@ async function detectGithubRepo() {
         const reposRes = await fetch(`https://api.github.com/user/repos?sort=updated&per_page=1`, {
             headers: {
                 "Authorization": `Bearer ${GITHUB_TOKEN}`,
-                "Accept": "application/vnd.github.v3+json"
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "Discord-TKB-Bot"
             }
         });
         const reposData = await reposRes.json();
@@ -80,7 +82,8 @@ async function loadTkbFromGithub() {
         const res = await fetch(url, {
             headers: {
                 "Authorization": `Bearer ${GITHUB_TOKEN}`,
-                "Accept": "application/vnd.github.v3+json"
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "Discord-TKB-Bot"
             }
         });
 
@@ -104,7 +107,8 @@ async function saveTkbToGithub(data) {
         const getRes = await fetch(url, {
             headers: {
                 "Authorization": `Bearer ${GITHUB_TOKEN}`,
-                "Accept": "application/vnd.github.v3+json"
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "Discord-TKB-Bot"
             }
         });
         if (getRes.ok) {
@@ -112,7 +116,7 @@ async function saveTkbToGithub(data) {
             sha = fileData.sha;
         }
 
-        const contentBase64 = Buffer.from(JSON.stringify(data, null, 4)).toString('base64');
+        const contentBase64 = Buffer.from(JSON.stringify(data, null, 4)).toString('utf-8');
 
         const body = {
             message: "bot: tự động cập nhật tkb_data.json từ Discord",
@@ -125,7 +129,8 @@ async function saveTkbToGithub(data) {
             headers: {
                 "Authorization": `Bearer ${GITHUB_TOKEN}`,
                 "Accept": "application/vnd.github.v3+json",
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
+                "User-Agent": "Discord-TKB-Bot"
             },
             body: JSON.stringify(body)
         });
@@ -146,13 +151,13 @@ async function saveTkbToGithub(data) {
 // ------------------------------------------------------------------
 // XỬ LÝ ẢNH BẰNG GEMINI AI
 // ------------------------------------------------------------------
-async function analyzeTkbWithAI(imageUrl) {
+async function analyzeTkbWithAI(imageUrl, mimeType = 'image/png') {
     const response = await fetch(imageUrl);
     const arrayBuffer = await response.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
     const prompt = `
-    Hãy đọc hình ảnh Thời khóa biểu này và trả về dữ liệu dưới dạng JSON thuần túy (không dùng markdown codeblock, không thêm bất kỳ văn bản nào khác).
+    Hãy đọc hình ảnh Thời khóa biểu này và trả về dữ liệu dưới dạng JSON thuần túy.
     Định dạng JSON cần trả về chính xác như sau:
     {
         "Monday": "Tiết 1: Môn A\\nTiết 2: Môn B\\n...",
@@ -173,26 +178,29 @@ async function analyzeTkbWithAI(imageUrl) {
             {
                 inlineData: {
                     data: buffer.toString('base64'),
-                    mimeType: 'image/png'
+                    mimeType: mimeType
                 }
             }
-        ]
+        ],
+        config: {
+            responseMimeType: "application/json" // Ép Gemini trả về JSON chuẩn
+        }
     });
 
-    const cleanText = aiResponse.text.replace(/```json/g, '').replace(/```/g, '').trim();
-    return JSON.parse(cleanText);
+    return JSON.parse(aiResponse.text);
 }
 
 // ------------------------------------------------------------------
 // SỰ KIỆN BOT
 // ------------------------------------------------------------------
-client.once('clientReady', async () => {
+// Đã sửa 'clientReady' -> 'ready' (hoặc Events.ClientReady)
+client.once(Events.ClientReady, async () => {
     console.log(`Bot đã kết nối thành công: ${client.user.tag}`);
     await detectGithubRepo();
     setupCronJobs();
 });
 
-client.on('messageCreate', async (message) => {
+client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot) return;
 
     if (message.attachments.size > 0) {
@@ -203,7 +211,8 @@ client.on('messageCreate', async (message) => {
             await message.channel.send("🤖 **Gemini AI** đang phân tích ảnh TKB, vui lòng chờ chút...");
 
             try {
-                const parsedTkb = await analyzeTkbWithAI(attachment.url);
+                // Truyền thêm contentType động vào hàm
+                const parsedTkb = await analyzeTkbWithAI(attachment.url, attachment.contentType);
                 await saveTkbToGithub(parsedTkb);
                 await message.channel.send("✅ **Đã đọc và cập nhật Thời khóa biểu lên GitHub thành công!**");
             } catch (error) {
