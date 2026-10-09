@@ -10,6 +10,9 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 
+// ID Discord của bạn (được quyền dùng bot)
+const ALLOWED_USER_ID = process.env.ALLOWED_USER_ID || "1188753053898260531";
+
 const GIO_SANG = process.env.GIO_SANG || "06:00";
 const GIO_TOI = process.env.GIO_TOI || "19:00";
 const FILE_PATH = "tkb_data.json";
@@ -37,6 +40,16 @@ const TEN_THU_VI = {
     "Friday": "Thứ 6",
     "Saturday": "Thứ 7",
     "Sunday": "Chủ Nhật"
+};
+
+const MAP_NHAP_THU = {
+    "2": "Monday", "thu 2": "Monday", "thứ 2": "Monday", "monday": "Monday", "mon": "Monday",
+    "3": "Tuesday", "thu 3": "Tuesday", "thứ 3": "Tuesday", "tuesday": "Tuesday", "tue": "Tuesday",
+    "4": "Wednesday", "thu 4": "Wednesday", "thứ 4": "Wednesday", "wednesday": "Wednesday", "wed": "Wednesday",
+    "5": "Thursday", "thu 5": "Thursday", "thứ 5": "Thursday", "thursday": "Thursday", "thu": "Thursday",
+    "6": "Friday", "thu 6": "Friday", "thứ 6": "Friday", "friday": "Friday", "fri": "Friday",
+    "7": "Saturday", "thu 7": "Saturday", "thứ 7": "Saturday", "saturday": "Saturday", "sat": "Saturday",
+    "cn": "Sunday", "chu nhat": "Sunday", "chủ nhật": "Sunday", "sunday": "Sunday", "sun": "Sunday"
 };
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -116,7 +129,6 @@ async function saveTkbToGithub(data) {
             sha = fileData.sha;
         }
 
-        // Đã sửa thành 'base64' chuẩn cho GitHub API
         const contentBase64 = Buffer.from(JSON.stringify(data, null, 4)).toString('base64');
 
         const body = {
@@ -195,7 +207,7 @@ async function analyzeTkbWithAI(imageUrl, mimeType = 'image/png') {
 // SỰ KIỆN BOT
 // ------------------------------------------------------------------
 client.once(Events.ClientReady, async () => {
-    console.log(`✅ Bot đã kết nối và CHỈ nhận TKB qua nhắn tin riêng (DM): ${client.user.tag}`);
+    console.log(`✅ Bot đã kết nối (Chế độ riêng tư): ${client.user.tag}`);
     await detectGithubRepo();
     setupCronJobs();
 });
@@ -203,15 +215,75 @@ client.once(Events.ClientReady, async () => {
 client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot) return;
 
-    // Chỉ xử lý tin nhắn riêng (DM)
+    // 1. Chỉ nhận tin nhắn riêng (DM)
     if (message.channel.type !== ChannelType.DM) return;
 
+    // 2. Kiểm tra chỉ cho phép chính bạn (ALLOWED_USER_ID) dùng bot
+    if (ALLOWED_USER_ID && ALLOWED_USER_ID !== "ID_DISCORD_CỦA_BẠN" && message.author.id !== ALLOWED_USER_ID) {
+        await message.channel.send("⛔ Bạn không có quyền sử dụng Bot này!");
+        return;
+    }
+
+    const content = message.content.trim();
+
+    // --------------------------------------------------------------
+    // XỬ LÝ LỆNH !check
+    // --------------------------------------------------------------
+    if (content.toLowerCase().startsWith('!check')) {
+        const query = content.slice(6).trim().toLowerCase();
+        const tkbData = await loadTkbFromGithub();
+
+        if (!tkbData || Object.keys(tkbData).length === 0) {
+            await message.channel.send("⚠️ Chưa có dữ liệu TKB nào trên GitHub. Vui lòng gửi ảnh TKB trước!");
+            return;
+        }
+
+        // Trường hợp 1: Tách danh sách theo dấu chấm phẩy (ví dụ: !check 2;3;4;5;6;7)
+        if (query.includes(';')) {
+            const listThu = query.split(';').map(item => item.trim());
+            let replyText = "📅 **THỜI KHÓA BIỂU DỰA THEO YÊU CẦU:**\n\n";
+
+            for (const item of listThu) {
+                const dayKey = MAP_NHAP_THU[item];
+                if (dayKey) {
+                    const thuTen = TEN_THU_VI[dayKey];
+                    const tkbMon = tkbData[dayKey] || "Nghỉ học / Chưa có thông tin";
+                    replyText += `📌 **${thuTen.toUpperCase()}**:\n${tkbMon}\n───────────────────\n`;
+                } else {
+                    replyText += `❌ Không nhận diện được: "${item}"\n───────────────────\n`;
+                }
+            }
+            await message.channel.send(replyText);
+            return;
+        }
+
+        // Trường hợp 2: Kiểm tra 1 thứ đơn lẻ (ví dụ: !check 2, !check thứ 3)
+        if (query && MAP_NHAP_THU[query]) {
+            const dayKey = MAP_NHAP_THU[query];
+            const thuTen = TEN_THU_VI[dayKey];
+            const tkbMon = tkbData[dayKey] || "Nghỉ học / Chưa có thông tin";
+            await message.channel.send(`📌 **THỜI KHÓA BIỂU ${thuTen.toUpperCase()}**:\n\n${tkbMon}`);
+            return;
+        }
+
+        // Trường hợp 3: !check (không nhập tham số) -> Xem TKB hôm nay
+        const now = new Date(new Date().toLocaleString("en-US", { timeZone: TIMEZONE }));
+        const todayKey = DAYS[now.getDay()];
+        const thuToday = TEN_THU_VI[todayKey];
+        const tkbToday = tkbData[todayKey] || "Nghỉ học / Chưa có thông tin";
+        await message.channel.send(`☀️ **THỜI KHÓA BIỂU HÔM NAY (${thuToday.toUpperCase()})**:\n\n${tkbToday}`);
+        return;
+    }
+
+    // --------------------------------------------------------------
+    // XỬ LÝ GỬI ẢNH TKB
+    // --------------------------------------------------------------
     if (message.attachments.size > 0) {
         const attachment = message.attachments.first();
         const isImage = attachment.contentType?.startsWith('image/');
 
         if (isImage) {
-            await message.channel.send("🤖 **Gemini AI** đang phân tích ảnh TKB bạn gửi riêng, vui lòng chờ chút...");
+            await message.channel.send("🤖 **Gemini AI** đang phân tích ảnh TKB, vui lòng chờ chút...");
 
             try {
                 const parsedTkb = await analyzeTkbWithAI(attachment.url, attachment.contentType);
